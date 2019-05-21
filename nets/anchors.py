@@ -15,61 +15,58 @@ v2 = {'feature_maps': [38, 19, 10, 5, 3, 1],
       'name': 'v2'}
 
 
-class PriorBox(object):
+class AnchorBox(object):
   def __init__(self, config):
-    super(PriorBox, self).__init__()
+    super(AnchorBox, self).__init__()
     # self.type = cfg.name
     self.image_size = config['min_dim']
-    # number of priors for feature map location (either 4 or 6)
-    # 使用的feature map 数量
-    self.num_priors = len(config['aspect_ratios'])
-    # feature map 大小
+    # number of anchors for each feature map
+    self.num_anchors = len(config['aspect_ratios'])
+    # size of each feature map
     self.feature_maps = config['feature_maps']
-    # 最小的box大小
+    # size of minimum anchor box in each feature map
     self.min_sizes = config['min_sizes']
-    # 最大的box大小
+    # size of maximum anchor box in each feature map
     self.max_sizes = config['max_sizes']
-    # 相邻box之间距离
+    # step size between anchors in each feature map
     self.steps = config['steps']
-    # box比例
+    # aspect ratio for anchor boxes in each feature map
     self.aspect_ratios = config['aspect_ratios']
-    # 如果box超出边界就截断
+    # clip anchor box if it is out of the image
     self.clip = config['clip']
     self.version = config['name']
 
   def __call__(self):
-    mean = []
+    boxes = []
     for k, f in enumerate(self.feature_maps):
-      # 在当前feature map大小中循环
       # 00,01,...,0f,10,11,...,1f,...,f1,...,ff
       for i, j in product(range(f), repeat=2):
-        f_k = self.image_size / self.steps[k]
-        # unit center x,y
-        cx = (j + 0.5) / f_k
-        cy = (i + 0.5) / f_k
+        # the relative coordinate of an anchor box is (i + 0.5) * step_size / img_size
+        cx = (j + 0.5) * self.steps[k] / self.image_size
+        cy = (i + 0.5) * self.steps[k] / self.image_size
 
-        # aspect_ratio: 1
-        # rel size: min_size
+        # anchor boxes with size = min_size and aspect_ratio = 1
         s_k = self.min_sizes[k] / self.image_size
-        mean += [cx, cy, s_k, s_k]
+        boxes += [cx, cy, s_k, s_k]
 
-        # aspect_ratio: 1
-        # rel size: sqrt(s_k * s_(k+1))
-        s_k_prime = sqrt(s_k * (self.max_sizes[k] / self.image_size))
-        mean += [cx, cy, s_k_prime, s_k_prime]
+        # anchor boxes with size = sqrt(min_size[k] * min_size[k+1]) and aspect_ratio = 1
+        s_k_prime = sqrt(self.min_sizes[k] * self.max_sizes[k]) / self.image_size
+        boxes += [cx, cy, s_k_prime, s_k_prime]
 
         # rest of aspect ratios
-        for ar in self.aspect_ratios[k]:
-          mean += [cx, cy, s_k * sqrt(ar), s_k / sqrt(ar)]
-          mean += [cx, cy, s_k / sqrt(ar), s_k * sqrt(ar)]
+        for ratio in self.aspect_ratios[k]:
+          # ratio * x * x = min_size ** 2
+          # x = sqrt(min_size ** 2 / ratio) = min_size / sqrt(ratio)
+          # x / img_szie = min_size / img_size / sqrt(ratio)
+          boxes += [cx, cy, s_k * sqrt(ratio), s_k / sqrt(ratio)]
+          boxes += [cx, cy, s_k / sqrt(ratio), s_k * sqrt(ratio)]
 
-    # 转换成[N,4]形式，共N个anchor box
-    output = np.array(mean).reshape([-1, 4])
+    output = np.array(boxes).reshape([-1, 4])  # shape: [8732, 4]
     if self.clip:
       output = np.clip(output, a_min=0, a_max=1.0)
     return output
 
 
 if __name__ == '__main__':
-  boxes = PriorBox(v2)()
-  pass
+  boxes = AnchorBox(v2)()
+  print(boxes)

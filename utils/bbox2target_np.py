@@ -1,68 +1,80 @@
-# -*- coding: utf-8 -*-
 import numpy as np
 
 
 def xywh_to_xyxy_np(boxes):
-  return np.concatenate((boxes[:, :2] - boxes[:, 2:] / 2,  # xmin, ymin
-                         boxes[:, :2] + boxes[:, 2:] / 2), 1)  # xmax, ymax
+  return np.concatenate((boxes[:, :2] - boxes[:, 2:] / 2,  # x - w / 2, y - w / 2
+                         boxes[:, :2] + boxes[:, 2:] / 2), 1)  # x + w / 2, y + w / 2
 
 
 def xyxy_to_xywh_np(boxes):
-  return np.concatenate(((boxes[:, 2:] + boxes[:, :2]) / 2,  # cx, cy
-                         boxes[:, 2:] - boxes[:, :2]), 1)  # w, h
+  return np.concatenate(((boxes[:, 2:] + boxes[:, :2]) / 2,  # (min + max) / 2
+                         boxes[:, 2:] - boxes[:, :2]), 1)  # max - min
 
 
 def IoU_np(box_a, box_b):
-  max_xy = np.minimum(box_a[:, 2:][:, None, :], box_b[:, 2:][None, :, :])
-  min_xy = np.maximum(box_a[:, :2][:, None, :], box_b[:, :2][None, :, :])
+  min_xy_a, max_xy_a = box_a[:, :2], box_a[:, 2:]
+  min_xy_b, max_xy_b = box_b[:, :2], box_b[:, 2:]
+
+  # boardcast [Na, 1, 2] with [1, Nb, 2], result in [Na, Nb, 2]
+  # this means compare each box in box_a with each box in box_b
+  # thus there are Na x Nb minimum/maximum (x, y)
+  max_xy = np.minimum(max_xy_a[:, None, :], max_xy_b[None, :, :])
+  min_xy = np.maximum(min_xy_a[:, None, :], min_xy_b[None, :, :])
+  # if two boxes do not overlap, the IOU should be 0
   inter = np.clip((max_xy - min_xy), a_min=0, a_max=None)
+  # [Na, Nb] x [Na, Nb] result in [Na, Nb]
+  # which means Na x Nb overlaps for each pair of boxes
   inter = inter[:, :, 0] * inter[:, :, 1]
 
-  area_a = ((box_a[:, 2] - box_a[:, 0]) * (box_a[:, 3] - box_a[:, 1]))[:, None]  # [A,B]
-  area_b = ((box_b[:, 2] - box_b[:, 0]) * (box_b[:, 3] - box_b[:, 1]))[None, :]  # [A,B]
-  union = area_a + area_b - inter
-  return inter / union  # [A,B]
+  # box = [x_min, y_min, x_max, y_max]
+  area_a = ((box_a[:, 2] - box_a[:, 0]) * (box_a[:, 3] - box_a[:, 1]))[:, None]  # [Na, 1]
+  area_b = ((box_b[:, 2] - box_b[:, 0]) * (box_b[:, 3] - box_b[:, 1]))[None, :]  # [1, Nb]
+  union = area_a + area_b - inter  # [Na, Nb]
+  return inter / union  # [Na, Nb]
 
 
-def match_np(pos_threshold, ground_truths, priors_boxes, labels):
+def match_np(pos_threshold, gt_boxes, priors_boxes, cls_labels):
   # jaccard index
-  overlaps = IoU_np(ground_truths, xywh_to_xyxy_np(priors_boxes))
+  overlaps = IoU_np(gt_boxes, xywh_to_xyxy_np(priors_boxes))
 
-  # [1,num_objects] best prior for each ground truth
-  # best_prior_overlap = np.amax(overlaps, 1)
-  best_prior_idx = np.argmax(overlaps, 1)
+  # [1, num_objects] best prior for each ground truth
+  # best_prior_overlap = np.amax(overlaps, 1) # overlap
+  best_prior_idx = np.argmax(overlaps, 1)  # ind
 
-  # [1,num_priors] best ground truth for each prior
-  best_gt_overlap = np.amax(overlaps, 0)
-  best_gt_idx = np.argmax(overlaps, 0)
+  # [1, num_priors] best ground truth for each prior
+  best_gt_overlap = np.amax(overlaps, 0)  # overlap
+  best_gt_idx = np.argmax(overlaps, 0)  # ind
 
-  # 把每个gtbox对应的最大prior的iou设置为2？
+  # 把每个gtbox对应的最大prior的iou设置为2, note that other iou are all below 1
   best_gt_overlap[best_prior_idx] = 2
 
   # 先把每个gtbox的最大prior设置为gtbox的idx
   # ensure every gt matches with its prior of max overlap
+  # best_prior_idx coresponding to gt box 1, 2, ..., N
   best_gt_idx[best_prior_idx] = np.arange(best_prior_idx.shape[0])
 
   # 选出每个prior对应的gtbox
-  matches = ground_truths[best_gt_idx]  # Shape: [num_priors,4]
+  gt_matches = gt_boxes[best_gt_idx]  # Shape: [num_priors, 4]
 
   # 选出每个prior对应的label
-  cls = labels[best_gt_idx] + 1  # Shape: [num_priors]
+  cls_target = cls_labels[best_gt_idx] + 1  # Shape: [num_priors]
+
   # iou过低的prior label是0
-  # cls[best_gt_overlap < pos_threshold] = -1  # label as notuse
-  cls[best_gt_overlap < pos_threshold] = 0  # label as background
+  cls_target[best_gt_overlap < pos_threshold] = 0  # label as background
 
-  # dist b/t match center and prior's center
-  g_cxcy = (matches[:, :2] + matches[:, 2:]) / 2 - priors_boxes[:, :2]
-  # encode variance
+  # distance between matched gt box center and prior's center
+  g_cxcy = (gt_matches[:, :2] + gt_matches[:, 2:]) / 2 - priors_boxes[:, :2]
+  # distance / prior_box_size, and encode variance
   g_cxcy /= (priors_boxes[:, 2:] * 0.1)
-  # match wh / prior wh
-  g_wh = (matches[:, 2:] - matches[:, :2]) / priors_boxes[:, 2:]
+  # matched gt_box_size / prior_box_size
+  g_wh = (gt_matches[:, 2:] - gt_matches[:, :2]) / priors_boxes[:, 2:]
+  # apply log, and encode variance
   g_wh = np.log(g_wh) / 0.2
-  # return target for smooth_l1_loss
-  reg = np.concatenate([g_cxcy, g_wh], 1)  # [num_priors,4]
 
-  return reg, cls
+  # return target for smooth_l1_loss
+  reg_target = np.concatenate([g_cxcy, g_wh], 1)  # [num_priors,4]
+
+  return reg_target, cls_target
 
 
 # Adapted from https://github.com/Hakuyume/chainer-ssd
@@ -160,13 +172,12 @@ def nms_np(boxes, scores, overlap=0.5, top_k=200):
     argsort_prob = argsort_prob[IoU < overlap]
   return boxes[keep, :], scores[keep], count
 
-
-if __name__ == '__main__':
-  from nets.anchors import *
-  import pickle
-
-  with open('../debug.pickle', 'rb') as handle:
-    debug = pickle.load(handle)
-
-  for i in range(len(debug)):
-    out = detect_np(debug[i][0], debug[i][1], 200, 0.01, 0.45)
+# if __name__ == '__main__':
+#   from nets.anchors import *
+#   import pickle
+#
+#   with open('../debug.pickle', 'rb') as handle:
+#     debug = pickle.load(handle)
+#
+#   for i in range(len(debug)):
+#     out = detect_np(debug[i][0], debug[i][1], 200, 0.01, 0.45)

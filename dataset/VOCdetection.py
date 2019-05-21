@@ -57,83 +57,81 @@ class VOCDetection(data.Dataset):
 
     self._annopath = os.path.join('%s', 'Annotations', '%s.xml')
     self._imgpath = os.path.join('%s', 'JPEGImages', '%s.jpg')
-    # todo what's this?
-    self.prior_boxes = PriorBox(v2)()
+    # generate all anchor boxes
+    # shape: [N, 4]
+    self.prior_boxes = AnchorBox(v2)()
     self.positive_threshold = positive_threshold
-    self.ids = list()
+    self.img_names = list()
     self.keep_difficult = keep_difficult
 
     for (year, name) in image_sets:
       rootpath = os.path.join(self.root_dir, 'VOC' + year)
       for line in open(os.path.join(rootpath, 'ImageSets', 'Main', name + '.txt')):
-        self.ids.append((rootpath, line.strip()))
+        self.img_names.append((rootpath, line.strip()))
+    return
 
   def __getitem__(self, index):
-    return self.pull_item(index)
+    img_root, img_name = self.img_names[index]
 
-  def __len__(self):
-    return len(self.ids)
-
-  def pull_item(self, index):
-    img_id = self.ids[index]
-
-    raw_target = ET.parse(self._annopath % img_id).getroot()
-    img = cv2.imread(self._imgpath % img_id)
+    raw_target = ET.parse(self._annopath % (img_root, img_name)).getroot()
+    img = cv2.imread(self._imgpath % (img_root, img_name))
     height, width, channels = img.shape
 
     target = self.target_transform(raw_target, width, height)
 
     if self.transform is not None:
       target = np.array(target)
-      # 对图像做变换需要同时改变target
       img, boxes, labels = self.transform(img, target[:, :4], target[:, 4])
-      # cv2在读取数据的时候，图像是BGR格式的！如果不注释下面就会把BGR转换成了RGB！和预训练的VGG权重不匹配了！
-      # is it？
+
+      # image read by cv2.imread is BGR
       # to rgb
       # img = img[:, :, (2, 1, 0)]
-      # img = img.transpose(2, 0, 1)
       # target = np.hstack((boxes, np.expand_dims(labels, axis=1)))
+    else:
+      boxes, labels = target[:, :4], target[:, 4]
 
     # match priors (default boxes) and ground truth boxes
-    loc_target, conf_target = match_np(self.positive_threshold, boxes, self.prior_boxes, labels)
+    reg_target, cls_target = match_np(self.positive_threshold, boxes,
+                                      self.prior_boxes, labels)
 
-    # 把[H,W,C]变成[C,H,W]
-    return torch.from_numpy(img).permute(2, 0, 1), \
-           torch.from_numpy(loc_target).float(), \
-           torch.from_numpy(conf_target).long(), \
-           {'id': img_id, 'h': height, 'w': width}
+    # [H,W,C] -> [C,H,W]
+    img = torch.from_numpy(img).permute(2, 0, 1)
+    reg_target = torch.from_numpy(reg_target).float()
+    cls_target = torch.from_numpy(cls_target).long()
+    meta_data = {'id': (img_root, img_name), 'h': height, 'w': width}
+    return img, reg_target, cls_target, meta_data
+
+  def __len__(self):
+    return len(self.img_names)
 
 
 def detection_collate(batch):
-  imgs = []
-  bbox_targets = []
-  cls_targets = []
-  meta_datas = []
-  for sample in batch:
-    imgs.append(sample[0])
-    bbox_targets.append(sample[1])
-    cls_targets.append(sample[2])
-    meta_datas.append(sample[3])
-  return torch.stack(imgs, 0), \
-         torch.stack(bbox_targets, 0), \
-         torch.stack(cls_targets, 0), \
-         meta_datas
+  imgs, reg_targets, cls_targets, meta_datas = zip(*batch)
+  imgs = torch.stack(imgs, 0)
+  reg_targets = torch.stack(reg_targets, 0)
+  cls_targets = torch.stack(cls_targets, 0)
+  return imgs, reg_targets, cls_targets, meta_datas
 
 
 if __name__ == '__main__':
   import time
+  import seaborn as sns
 
-  dataset = VOCDetection('F:/VOCdevkit',
-                         image_sets=[('2007', 'trainval'), ('2012', 'trainval')])
-  data_loader = data.DataLoader(dataset, 1, num_workers=0, shuffle=False,
+  colors = sns.color_palette("hls", NUM_CLASSES)
+
+  dataset = VOCDetection('E:\\VOCdevkit',
+                         image_sets=[('2007', 'trainval'), ('2012', 'trainval')],
+                         transform=imageAugmentation(train=True,
+                                                     to_01=False,
+                                                     to_rgb=False,
+                                                     mean=[104, 117, 123], std=[1, 1, 1]))
+  data_loader = data.DataLoader(dataset, 2, num_workers=0, shuffle=False,
                                 collate_fn=detection_collate, pin_memory=True)
 
-  prior_boxes = PriorBox(v2).forward()
+  prior_boxes = AnchorBox(v2)()
 
   start_time = time.perf_counter()
   for batch_idx, (images, bbox_targets, cls_targets, _) in enumerate(dataset):
-    # print(np.amax(bbox_targets.numpy()),np.amin(bbox_targets.numpy()),
-    #       np.amax(cls_targets.numpy()), np.amin(cls_targets.numpy()))
 
     img = images.numpy().transpose([1, 2, 0])
     img = (img - np.amin(img)) / (np.amax(img) - np.amin(img))
@@ -147,30 +145,14 @@ if __name__ == '__main__':
       cv2.rectangle(img,
                     (int(img.shape[1] * box[0]), int(img.shape[0] * box[1])),
                     (int(img.shape[1] * box[2]), int(img.shape[0] * box[3])),
-                    color=COLORS[int(cls)], thickness=2)
+                    color=colors[int(cls)], thickness=2)
       cv2.rectangle(img,
                     (int(img.shape[1] * box[0]), int(img.shape[0] * box[1]) - 15),
                     (int(img.shape[1] * box[0]) + len(VOC_CLASSES[int(cls)]) * 8, int(img.shape[0] * box[1])),
-                    color=COLORS[int(cls)], thickness=-1)
+                    color=colors[int(cls)], thickness=-1)
       cv2.putText(img, VOC_CLASSES[int(cls)], (int(img.shape[1] * box[0]), int(img.shape[0] * box[1]) - 3),
                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255))
       print(box, VOC_CLASSES[int(cls)])
 
     cv2.imshow('img', img)
     cv2.waitKey()
-
-    # for images, targets, names in dataset:
-    #   img = images.numpy().transpose([1, 2, 0])
-    #   img = (img - np.amin(img)) / (np.amax(img) - np.amin(img))
-    #   img = cv2.resize(img, (500, 500))
-    #
-    #   for i, box in enumerate(targets):
-    #     cv2.rectangle(img, (int(img.shape[1] * box[0]), int(img.shape[0] * box[1])),
-    #                   (int(img.shape[1] * box[2]), int(img.shape[0] * box[3])),
-    #                   color=COLORS[int(box[-1])], thickness=2)
-    #     cv2.putText(img, names[i], (int(img.shape[1] * box[0]), int(img.shape[0] * box[1])),
-    #                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255))
-    #
-    #   cv2.imshow('img', img)
-    #   cv2.waitKey()
-    #   pass

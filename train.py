@@ -1,36 +1,31 @@
 import os
-import sys
-import cv2
 import time
 import argparse
-from collections import OrderedDict
+from datetime import datetime
 
-from tqdm import tqdm
-from tensorboardX import SummaryWriter
-
-import torch
 import torch.optim as optim
 import torch.backends.cudnn as cudnn
+
 cudnn.benchmark = True
 
-from dataset.VOCdetection import *
+from tensorboardX import SummaryWriter
+
 from nets.ssd import *
+
 from utils.io import *
 from utils.losses import *
-from eval_mAP import *
+from utils.eval_mAP import *
 
 parser = argparse.ArgumentParser()
 
 parser.add_argument('--root_dir', type=str, default='./')
-parser.add_argument('--data_dir', type=str, default='E:\\VOCdevkit')
-parser.add_argument('--eval_data_dir', type=str, default='E:\\VOCdevkit_test')
-parser.add_argument('--log_name', type=str, default='SSD_07_12_glasso_0.01')
-
-parser.add_argument('--pretrain_dir', type=str, default='./model/vgg16')
+parser.add_argument('--data_dir', type=str, default='../VOCdevkit')
+parser.add_argument('--eval_data_dir', type=str, default='../VOCdevkit_test')
+parser.add_argument('--log_name', type=str, default='SSD_07_12_baseline')
+parser.add_argument('--pretrain_dir', type=str, default='./ckpt/vgg16/checkpoint.t7')
 
 parser.add_argument('--neg_pos_ratio', type=float, default=3.0)
 parser.add_argument('--alpha', type=float, default=1.0)
-
 parser.add_argument('--lr', type=float, default=1e-3)
 parser.add_argument('--wd', type=float, default=5e-4)
 
@@ -45,37 +40,39 @@ parser.add_argument('--log_interval', type=int, default=10)
 
 cfg = parser.parse_args()
 
-cfg.model_dir = os.path.join(cfg.root_dir, 'model', cfg.log_name)
+cfg.ckpt_dir = os.path.join(cfg.root_dir, 'ckpt', cfg.log_name)
 cfg.log_dir = os.path.join(cfg.root_dir, 'logs', cfg.log_name)
 
-os.makedirs(cfg.model_dir, exist_ok=True)
+os.makedirs(cfg.ckpt_dir, exist_ok=True)
 os.makedirs(cfg.log_dir, exist_ok=True)
 
-if not cfg.cluster:
-  os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"  # see issue #152
-  os.environ["CUDA_VISIBLE_DEVICES"] = cfg.use_gpu
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"  # see issue #152
+
+
+# os.environ["CUDA_VISIBLE_DEVICES"] = cfg.use_gpu
 
 
 def main():
   train_set = VOCDetection(cfg.data_dir,
                            image_sets=[('2007', 'trainval'), ('2012', 'trainval')],
-                           transform=aug_generator(base_network=cfg.base_network, train=True))
+                           transform=imageAugmentation(train=True))
   train_loader = data.DataLoader(train_set, cfg.train_batch_size,
                                  num_workers=cfg.workers, shuffle=True,
                                  collate_fn=detection_collate, pin_memory=True)
 
   eval_set = VOCDetection(cfg.eval_data_dir,
                           image_sets=[('2007', 'test')],
-                          transform=aug_generator(base_network=cfg.base_network, train=False))
+                          transform=imageAugmentation(train=True))
   eval_loader = data.DataLoader(eval_set, cfg.eval_batch_size,
                                 num_workers=cfg.workers, shuffle=False,
                                 collate_fn=detection_collate, pin_memory=True)
 
-  model = SSD(base=cfg.base_network).cuda()
-  model.weight_init()
-  # model = torch.nn.DataParallel(model.cuda())
+  map_util = mAP(cfg.eval_data_dir)
+
+  model = SSD()
+  load_pretrain(model, cfg.pretrain_dir)
+  model = nn.DataParallel(model.cuda())
   # load pretrained model
-  load_pretrain(model, cfg.base_dir)
 
   optimizer = optim.SGD(model.parameters(), lr=cfg.lr, momentum=0.9, weight_decay=cfg.wd)
   scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[150, 200, 230], gamma=0.1)
@@ -84,60 +81,61 @@ def main():
   summary_writer = SummaryWriter(cfg.log_dir)
 
   def train(epoch):
-    print('\nEpoch: %d' % epoch)
+    print('\n%s Epoch: %d' % (str(datetime.now())[:-7], epoch))
     model.train()
-    model.phase = 'train'
+    model._modules['module'].phase = 'train'
 
-    start_time = time.perf_counter()
-    for batch_idx, (images, reg_targets, cls_targets, _) in enumerate(train_loader):
-      images, reg_targets, cls_targets = images.cuda(), reg_targets.cuda(), cls_targets.cuda()
+    tic = time.perf_counter()
+    for idx, (inputs, reg_targets, cls_targets, _) in enumerate(train_loader):
+      inputs = inputs.cuda()
+      reg_targets = reg_targets.cuda(non_blocking=True)
+      cls_targets = cls_targets.cuda(non_blocking=True)
 
-      reg_pred, cls_pred = model(images)
+      reg_pred, cls_pred = model(inputs)
 
-      optimizer.zero_grad()  # 我有一句...不知当不当讲...
+      optimizer.zero_grad()  # it took me one week to find out that I forgot this...
       reg_loss, cls_loss = criterion(reg_pred=reg_pred, cls_pred=cls_pred,
                                      reg_targets=reg_targets, cls_targets=cls_targets)
 
-      losses = OrderedDict([('loc_loss', reg_loss.item()), ('cls_loss', cls_loss.item())])
-
       loss = cfg.alpha * reg_loss + cls_loss
       loss.backward()
+      nn.utils.clip_grad_norm_(model.parameters(), 5.0)
       optimizer.step()
 
-      if batch_idx % cfg.log_interval == 0:
-        duration = time.perf_counter() - start_time
-        print_train_log(epoch, batch_idx, losses,
-                        cfg.log_interval * cfg.train_batch_size / duration, duration / cfg.log_interval)
-        start_time = time.perf_counter()
+      if idx % cfg.log_interval == 0:
+        toc = time.perf_counter() - tic
+        print('epoch: %d step: %d cls_loss= %.5f reg_loss= %.5f (%d imgs/sec %.2f sec/batch)' % \
+              (epoch, idx, cls_loss.item(), reg_loss.item(),
+               cfg.log_interval * cfg.train_batch_size / toc, toc / cfg.log_interval))
+        tic = time.perf_counter()
 
-        step = epoch * len(train_loader) + batch_idx
-        for key in losses.keys():
-          summary_writer.add_scalar(key, losses[key], step)
+        step = epoch * len(train_loader) + idx
+        summary_writer.add_scalar('reg_loss', reg_loss.item(), step)
+        summary_writer.add_scalar('cls_loss', cls_loss.item(), step)
         summary_writer.add_scalar('learning rate', optimizer.param_groups[0]['lr'], step)
 
   def eval(epoch):
     model.eval()
-    model.phase = 'eval'
+    model._modules['module'].phase = 'eval'
 
     results = {k: [] for k in VOC_CLASSES}
-    with tqdm(total=len(eval_loader)) as pbar:
-      for batch_idx, (images, reg_targets, cls_targets, meta_data) in enumerate(eval_loader):
-        images = images.cuda()
+    with torch.no_grad():
+      for inputs, reg_targets, cls_targets, meta_data in eval_loader:
+        inputs = inputs.cuda()
         img_id = meta_data[0]['id']
         width = meta_data[0]['w']
         height = meta_data[0]['h']
-        outputs = model(images)
+        outputs = model(inputs)  # [B, num_anchors, 5]
 
-        outputs = outputs[0].cpu().data.numpy()
+        outputs = outputs[0].detach().cpu().numpy()
         for i in range(1, outputs.shape[0]):
           for j in range(outputs.shape[1]):
             if outputs[i, j, 0] > 0.6:
               box = (outputs[i, j, 1:] * [width, height, width, height]).astype(np.int32)
-              results[VOC_CLASSES[i - 1]]. \
-                append('%s %.6f %d %d %d %d' % (img_id[-1], outputs[i, j, 0], box[0], box[1], box[2], box[3]))
+              results[VOC_CLASSES[i - 1]].append(
+                '%s %.6f %d %d %d %d' % (img_id[-1], outputs[i, j, 0], box[0], box[1], box[2], box[3]))
             else:
               break
-        pbar.update(cfg.eval_batch_size)
 
     filename = os.path.join(cfg.eval_data_dir, 'results', 'VOC2007', 'Main', 'comp3_det_test_%s.txt')
     for key in results.keys():
@@ -145,8 +143,7 @@ def main():
         for line in results[key]:
           print(line, end='\n', file=file)
 
-    aps, mean_ap = do_python_eval()
-    print_eval_log(aps, VOC_CLASSES, mean_ap, epoch)
+    aps, mean_ap = map_util.do_python_eval()
     for ap, cls in zip(aps, VOC_CLASSES):
       summary_writer.add_scalar('AP/%s_ap' % cls, ap, epoch)
     summary_writer.add_scalar('mean_AP', mean_ap, epoch)
@@ -156,7 +153,8 @@ def main():
     train(epoch)
     if epoch % cfg.epochs_per_eval == 0:
       eval(epoch)
-    save_model(model, optimizer, cfg.model_dir)
+    torch.save(model.state_dict(), os.path.join(cfg.ckpt_dir, 'checkpoint.t7'))
+    print('model saved in %s' % os.path.join(cfg.ckpt_dir, 'checkpoint.t7'))
 
   summary_writer.close()
 

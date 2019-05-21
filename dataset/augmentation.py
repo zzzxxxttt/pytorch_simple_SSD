@@ -32,7 +32,8 @@ def jaccard_numpy(box_a, box_b):
   return inter / union  # [A,B]
 
 
-# 重写compose，因为对图片的变换会影响到bbox,需要一起变换
+# reimplement compose，because transform on image also influences bbox
+# so bbox need to be transformed too
 class Compose(object):
   def __init__(self, transform_list):
     self.transform_list = transform_list
@@ -276,7 +277,7 @@ class RandomMirrorPct(object):
     _, width, _ = image.shape
     if np.random.randint(2):
       image = image[:, ::-1]
-      # boxes = boxes.copy()#为啥要copy？
+      # boxes = boxes.copy() # why copy?
       boxes[:, 0::2] = 1.0 - boxes[:, 2::-2]
     return image, boxes, labels
 
@@ -365,18 +366,18 @@ class RandomBrightness(object):
 
 class PhotometricDistort(object):
   def __init__(self):
-    self.pd = [RandomContrast(),  # 图片像素值随机乘以高斯系数
-               ConvertColor(current='BGR', transform='HSV'),  # 图片转换为HSV空间
-               RandomSaturation(),  # V通道随机乘以高斯系数
-               RandomHue(),  # H通道随机乘以高斯系数
-               ConvertColor(current='HSV', transform='BGR'),  # 图片转换为BGR空间
-               RandomContrast()]  # 图片像素值随机乘以高斯系数
+    self.pd = [RandomContrast(),  # multiply gaussian random value to each pixel
+               ConvertColor(current='BGR', transform='HSV'),  # to HSV space
+               RandomSaturation(),  # multiply gaussian random value to V channel
+               RandomHue(),  # multiply gaussian random value to H channel
+               ConvertColor(current='HSV', transform='BGR'),  # to BGR space
+               RandomContrast()]  # multiply gaussian random value to each pixel
 
-    self.rand_brightness = RandomBrightness()  # 图片像素值随机加上偏移量
-    self.rand_channel_shuffle = RandomChannelShuffle()  # 随机调换图片通道
+    self.rand_brightness = RandomBrightness()  # add random value to each pixel
+    self.rand_channel_shuffle = RandomChannelShuffle()  # randomly shuffle channels
 
   def __call__(self, image, boxes, labels):
-    # im = image.copy() #为啥要copy？
+    # im = image.copy() # why copy?
     image, boxes, labels = self.rand_brightness(image, boxes, labels)
 
     distort = Compose(self.pd[:-1] if np.random.randint(2) else self.pd[1:])
@@ -386,40 +387,33 @@ class PhotometricDistort(object):
 
 
 class imageAugmentation(object):
-  def __init__(self, size=300, mean=(104, 117, 123), std=(1, 1, 1), train=True, to_01=False, to_rgb=False):
+  def __init__(self,
+               size=300,
+               mean=(104, 117, 123),
+               std=(1, 1, 1),
+               train=True, to_01=False, to_rgb=False):
     self.mean = mean
     self.std = std
     self.size = size
     if train:
-      self.augment = Compose([ConvertToFloat32(),  # 把int型图片转为float
-                              ToAbsoluteCoords(),  # 把百分比box转为坐标box
-                              PhotometricDistort(),  # 图片风格变换
-                              Expand(self.mean),  # 图片随机扩大，扩充部分用均值填充
-                              RandomSampleCrop(),  # 随机裁剪图片，保证新box的重叠率
-                              # RandomMirrorPct(),  # 随机翻转图片
-                              RandomMirrorAbs(),  # 随机翻转图片
-                              ToPercentCoords(),  # 坐标box转换回百分比box
-                              Resize(self.size)])  # 图片缩放到固定大小
+      self.augment = Compose([ConvertToFloat32(),  # int -> float
+                              ToAbsoluteCoords(),  # relative coordinate -> abs coordinate
+                              PhotometricDistort(),  # see above for detail
+                              Expand(self.mean),  # randomly expand image, pad by mean value
+                              RandomSampleCrop(),  # randomly crop image
+                              # RandomMirrorPct(),  # randomly flipping image
+                              RandomMirrorAbs(),  # randomly flipping image
+                              ToPercentCoords(),  # abs coordinate -> relative coordinate
+                              Resize(self.size)])  # resize to 300x300
 
     else:
-      self.augment = Compose([ConvertToFloat32(),  # 把int型图片转为float
-                              Resize(self.size)])  # 图片缩放到固定大小
+      self.augment = Compose([ConvertToFloat32(),  # int -> float
+                              Resize(self.size)])  # resize to 300x300
     if to_01:
-      self.augment.add_transform([To_01()])  # 图片从0-255变为0-1
+      self.augment.add_transform([To_01()])  # 0~255 -> 0~1
     if to_rgb:
-      self.augment.add_transform([ToRGB()])  # 从BGR转换为RGB
-    self.augment.add_transform([Normalize(self.mean, self.std)])  # 减去均值
+      self.augment.add_transform([ToRGB()])  # BGR -> RGB
+    self.augment.add_transform([Normalize(self.mean, self.std)])  # - mean / std
 
   def __call__(self, img, boxes, labels):
     return self.augment(img, boxes, labels)
-
-
-def aug_generator(base_network, train):
-  if base_network == 'vgg16':
-    return imageAugmentation(train=train,
-                             to_01=False, to_rgb=False, mean=[104, 117, 123], std=[1, 1, 1])
-  elif base_network == 'mobilenet':
-    return imageAugmentation(train=train,
-                             to_01=True, to_rgb=True, mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225))
-  else:
-    assert False, 'base unknown !'
