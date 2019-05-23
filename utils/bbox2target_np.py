@@ -33,62 +33,62 @@ def IoU_np(box_a, box_b):
   return inter / union  # [Na, Nb]
 
 
-def match_np(pos_threshold, gt_boxes, priors_boxes, cls_labels):
+def match_np(pos_threshold, gt_boxes, anchor_boxes, cls_labels):
   # jaccard index
-  overlaps = IoU_np(gt_boxes, xywh_to_xyxy_np(priors_boxes))
+  overlaps = IoU_np(gt_boxes, xywh_to_xyxy_np(anchor_boxes))
 
-  # [1, num_objects] best prior for each ground truth
-  # best_prior_overlap = np.amax(overlaps, 1) # overlap
-  best_prior_idx = np.argmax(overlaps, 1)  # ind
+  # [1, num_objects] best anchor for each ground truth
+  # best_anchor_overlap = np.amax(overlaps, 1) # overlap
+  best_anchor_idx = np.argmax(overlaps, 1)  # ind
 
-  # [1, num_priors] best ground truth for each prior
+  # [1, 8732] best ground truth for each anchor
   best_gt_overlap = np.amax(overlaps, 0)  # overlap
   best_gt_idx = np.argmax(overlaps, 0)  # ind
 
-  # 把每个gtbox对应的最大prior的iou设置为2, note that other iou are all below 1
-  best_gt_overlap[best_prior_idx] = 2
+  # set the iou of anchors that have matched boxes to 2
+  # note that other iou are all below 1
+  best_gt_overlap[best_anchor_idx] = 2
 
-  # 先把每个gtbox的最大prior设置为gtbox的idx
-  # ensure every gt matches with its prior of max overlap
-  # best_prior_idx coresponding to gt box 1, 2, ..., N
-  best_gt_idx[best_prior_idx] = np.arange(best_prior_idx.shape[0])
+  # ensure every gt matches with its anchor of max overlap
+  # best_anchor_idx coresponding to gt box 1, 2, ..., N
+  best_gt_idx[best_anchor_idx] = np.arange(best_anchor_idx.shape[0])
 
-  # 选出每个prior对应的gtbox
-  gt_matches = gt_boxes[best_gt_idx]  # Shape: [num_priors, 4]
+  # find the gtboxes of each anchor
+  gt_matches = gt_boxes[best_gt_idx]  # Shape: [8732, 4]
 
-  # 选出每个prior对应的label
-  cls_target = cls_labels[best_gt_idx] + 1  # Shape: [num_priors]
+  # find the class label of each anchor
+  cls_target = cls_labels[best_gt_idx] + 1  # Shape: [8732]
 
-  # iou过低的prior label是0
+  # set label 0 to anchors that have a low iou
   cls_target[best_gt_overlap < pos_threshold] = 0  # label as background
 
-  # distance between matched gt box center and prior's center
-  g_cxcy = (gt_matches[:, :2] + gt_matches[:, 2:]) / 2 - priors_boxes[:, :2]
-  # distance / prior_box_size, and encode variance
-  g_cxcy /= (priors_boxes[:, 2:] * 0.1)
-  # matched gt_box_size / prior_box_size
-  g_wh = (gt_matches[:, 2:] - gt_matches[:, :2]) / priors_boxes[:, 2:]
+  # distance between matched gt box center and anchor's center
+  g_cxcy = (gt_matches[:, :2] + gt_matches[:, 2:]) / 2 - anchor_boxes[:, :2]
+  # distance / anchor_box_size, and encode variance
+  g_cxcy /= (anchor_boxes[:, 2:] * 0.1)
+  # matched gt_box_size / anchor_box_size
+  g_wh = (gt_matches[:, 2:] - gt_matches[:, :2]) / anchor_boxes[:, 2:]
   # apply log, and encode variance
   g_wh = np.log(g_wh) / 0.2
 
   # return target for smooth_l1_loss
-  reg_target = np.concatenate([g_cxcy, g_wh], 1)  # [num_priors,4]
+  reg_target = np.concatenate([g_cxcy, g_wh], 1)  # [8732, 4]
 
   return reg_target, cls_target
 
 
 # Adapted from https://github.com/Hakuyume/chainer-ssd
-def decode_np(loc, priors):
-  boxes = np.concatenate((priors[:, :2] + loc[:, :2] * 0.1 * priors[:, 2:],
-                          priors[:, 2:] * np.exp(loc[:, 2:] * 0.2)), 1)
+def decode_np(loc, anchors):
+  boxes = np.concatenate((anchors[:, :2] + loc[:, :2] * 0.1 * anchors[:, 2:],
+                          anchors[:, 2:] * np.exp(loc[:, 2:] * 0.2)), 1)
   boxes[:, :2] -= boxes[:, 2:] / 2
   boxes[:, 2:] += boxes[:, :2]
   return boxes
 
 
-def decode_batch_np(loc, priors):
-  boxes = np.concatenate((priors[:, :, :2] + loc[:, :, :2] * 0.1 * priors[:, :, 2:],
-                          priors[:, :, 2:] * np.exp(loc[:, :, 2:] * 0.2)), 1)
+def decode_batch_np(loc, anchors):
+  boxes = np.concatenate((anchors[:, :, :2] + loc[:, :, :2] * 0.1 * anchors[:, :, 2:],
+                          anchors[:, :, 2:] * np.exp(loc[:, :, 2:] * 0.2)), 1)
   boxes[:, :, :2] -= boxes[:, :, 2:] / 2
   boxes[:, :, 2:] += boxes[:, :, :2]
   return boxes

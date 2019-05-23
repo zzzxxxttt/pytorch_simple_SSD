@@ -19,44 +19,43 @@ class Detect(Function):
       raise ValueError('nms_threshold must be non negative.')
     self.conf_thresh = conf_thresh
 
-  def forward(self, loc_data, conf_data, prior_data):
+  def forward(self, reg_pred, cls_pred, prior_data):
     """
     Args:
-        loc_data: (tensor) Loc preds from loc layers
-            Shape: [batch,num_priors*4]
-        conf_data: (tensor) Shape: Conf preds from conf layers
-            Shape: [batch*num_priors,num_classes]
+        reg_pred: (tensor) Loc preds from loc layers
+            Shape: [batch,num_priors, 4]
+        cls_pred: (tensor) Shape: Conf preds from conf layers
+            Shape: [batch, num_priors,num_classes]
         prior_data: (tensor) Prior boxes and variances from priorbox layers
-            Shape: [1,num_priors,4]
+            Shape: [num_priors,4]
     """
-    num = loc_data.size(0)  # batch size
-    num_priors = prior_data.size(0)
-    output = torch.zeros(num, self.num_classes, self.top_k, 5).cuda()
-    conf_preds = conf_data.view(num, num_priors, self.num_classes).transpose(2, 1)
+    batch_size = reg_pred.size(0)  # batch size
+    num_anchors = prior_data.size(0)
+    output = torch.zeros(batch_size, self.num_classes, self.top_k, 5).cuda()
+    conf_preds = cls_pred.transpose(2, 1)
 
     # Decode predictions into bboxes.
-    for i in range(num):
-      decoded_boxes = decode(loc_data[i], prior_data)
+    for i in range(batch_size):
+      decoded_boxes = decode(reg_pred[i], prior_data)
       # For each class, perform nms
       # conf_scores = conf_preds[i].clone()
 
-      for cl in range(1, self.num_classes):
+      for cls in range(1, self.num_classes):
         # find the index of anchors with large confidence
-        c_mask = conf_preds[i, cl].gt(self.conf_thresh)
-        # extract there corresponding probabilities
-        scores = conf_preds[i, cl][c_mask]
-        if scores.dim() == 0:
+        c_mask = conf_preds[i, cls] > self.conf_thresh # [8732]
+        # extract the corresponding probabilities
+        scores = conf_preds[i, cls][c_mask] # [num_objects]
+        if scores.shape[0] == 0:
           continue
-        l_mask = c_mask.unsqueeze(1).expand_as(decoded_boxes)
-        #  extract there corresponding bboxes
+        l_mask = c_mask.unsqueeze(1).expand_as(decoded_boxes) # [8732, 4]
+        # extract the corresponding bboxes
         boxes = decoded_boxes[l_mask].view(-1, 4)
         # idx of highest scoring and non-overlapping boxes per class
         # non-maximum suppression
         ids, count = nms(decoded_boxes[l_mask].view(-1, 4), scores, self.nms_thresh, self.top_k)
         # bboxes and probabilities after NMS
-        output[i, cl, :count] = \
-          torch.cat((scores[ids[:count]].unsqueeze(1),
-                     boxes[ids[:count]]), 1)
+        output[i, cls, :count] = \
+          torch.cat((scores[ids[:count]].unsqueeze(1), boxes[ids[:count]]), 1)
 
     return output
 
@@ -76,7 +75,7 @@ def nms(boxes, scores, overlap=0.5, top_k=200):
   keep = scores.new(scores.size(0)).zero_().long()
   # return 0 if there is no bbox
   if boxes.numel() == 0:
-    return keep, 0
+    return keep
   x1 = boxes[:, 0]
   y1 = boxes[:, 1]
   x2 = boxes[:, 2]

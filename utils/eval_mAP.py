@@ -217,9 +217,9 @@ class mAP:
       precision = tp / np.maximum(tp + fp, np.finfo(np.float64).eps)
       ap = self.voc_ap(recall, precision, use_07_metric)
     else:
-      recall = -1.
-      precision = -1.
-      ap = -1.
+      recall = 0.
+      precision = 0.
+      ap = 0.
 
     return recall, precision, ap
 

@@ -21,9 +21,8 @@ class MultiBoxLoss(nn.Module):
     num_pos = pos_ind.sum(1, keepdim=True)  # shape: [B, 1]
 
     # extract reg_targets of postive examples and calculate smooth L1 loss
-    pos_ind_expand = pos_ind[:, :, None].expand_as(reg_pred)  # shape: [B, 8732, 4]
-    loc_loss = F.smooth_l1_loss(reg_pred[pos_ind_expand].view(-1, 4),
-                                reg_targets[pos_ind_expand].view(-1, 4),
+    loc_loss = F.smooth_l1_loss(reg_pred[pos_ind].view(-1, 4),
+                                reg_targets[pos_ind].view(-1, 4),
                                 reduction='sum')
 
     # get the class probability of each anchor box
@@ -55,7 +54,6 @@ class MultiBoxLoss(nn.Module):
     loc_loss /= num_pos.sum().float()
     cls_loss /= num_pos.sum().float()
     return loc_loss, cls_loss
-
 
 # if __name__ == '__main__':
 #   from nets.vgg_base import *

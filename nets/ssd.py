@@ -35,7 +35,7 @@ class SSD(nn.Module):
     self.extra_features = nn.ModuleList()
     self.reg_layers = nn.ModuleList()  # regression branch
     self.cls_layers = nn.ModuleList()  # classification branch
-    self.register_buffer('priors', torch.from_numpy(AnchorBox(v2)()).float())
+    self.register_buffer('anchors', torch.from_numpy(AnchorBox(v2)()).float())
 
     # extra feature maps
     C_in = self.base_network.out_channels
@@ -50,7 +50,7 @@ class SSD(nn.Module):
     # todo replace this after debug
     self.detect = old_detect.Detect(num_classes + 1,
                                     bkg_label=0, top_k=200,
-                                    conf_thresh=0.5, nms_thresh=0.45)
+                                    conf_thresh=0.01, nms_thresh=0.45)
 
     for m in self.modules():
       if isinstance(m, nn.Conv2d):
@@ -85,11 +85,19 @@ class SSD(nn.Module):
 
     if self.phase == 'eval':
       # todo replace this after debug
-      output = self.detect(reg_outputs, F.softmax(cls_outputs, dim=-1), self.priors)
-      return output
+      # loc and priors are in xywh form
+      decoded_boxes = \
+        torch.cat((self.anchors[None, :, :2] +
+                   reg_outputs[:, :, :2] * 0.1 * self.anchors[None, :, 2:],
+                   self.anchors[None, :, 2:] * torch.exp(reg_outputs[:, :, 2:] * 0.2)), -1)
+      # xywh -> xyxy
+      decoded_boxes[:,:, :2] -= decoded_boxes [:,:, 2:] / 2
+      decoded_boxes[:,:, 2:] += decoded_boxes [:,:, :2]
+
+      # output = self.detect(reg_outputs, F.softmax(cls_outputs, dim=-1), self.anchors)
+      return decoded_boxes, F.softmax(cls_outputs, dim=-1)
     else:
       return reg_outputs, cls_outputs
-
 
 # if __name__ == '__main__':
 #   features = []

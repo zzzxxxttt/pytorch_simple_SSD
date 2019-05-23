@@ -12,7 +12,7 @@ cudnn.benchmark = True
 from dataset.VOCdetection import *
 from nets.ssd import *
 from nets.anchors import *
-from utils.io import *
+from utils.i_o import *
 from utils.bbox2target_np import *
 
 use_gpu = True

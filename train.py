@@ -10,10 +10,14 @@ cudnn.benchmark = True
 
 from tensorboardX import SummaryWriter
 
+from dataset.VOCdetection import *
+from dataset.augmentation import *
+
 from nets.ssd import *
 
-from utils.io import *
+from utils.i_o import *
 from utils.losses import *
+from utils.nms_tf import *
 from utils.eval_mAP import *
 
 parser = argparse.ArgumentParser()
@@ -29,7 +33,7 @@ parser.add_argument('--alpha', type=float, default=1.0)
 parser.add_argument('--lr', type=float, default=1e-3)
 parser.add_argument('--wd', type=float, default=5e-4)
 
-parser.add_argument('--train_batch_size', type=int, default=32)
+parser.add_argument('--train_batch_size', type=int, default=64)
 parser.add_argument('--eval_batch_size', type=int, default=1)
 parser.add_argument('--max_epoch', type=int, default=300)
 parser.add_argument('--epochs_per_eval', type=int, default=10)
@@ -62,7 +66,7 @@ def main():
 
   eval_set = VOCDetection(cfg.eval_data_dir,
                           image_sets=[('2007', 'test')],
-                          transform=imageAugmentation(train=True))
+                          transform=imageAugmentation(train=False))
   eval_loader = data.DataLoader(eval_set, cfg.eval_batch_size,
                                 num_workers=cfg.workers, shuffle=False,
                                 collate_fn=detection_collate, pin_memory=True)
@@ -72,7 +76,6 @@ def main():
   model = SSD()
   load_pretrain(model, cfg.pretrain_dir)
   model = nn.DataParallel(model.cuda())
-  # load pretrained model
 
   optimizer = optim.SGD(model.parameters(), lr=cfg.lr, momentum=0.9, weight_decay=cfg.wd)
   scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[150, 200, 230], gamma=0.1)
@@ -83,7 +86,7 @@ def main():
   def train(epoch):
     print('\n%s Epoch: %d' % (str(datetime.now())[:-7], epoch))
     model.train()
-    model._modules['module'].phase = 'train'
+    model.module.phase = 'train'
 
     tic = time.perf_counter()
     for idx, (inputs, reg_targets, cls_targets, _) in enumerate(train_loader):
@@ -115,27 +118,38 @@ def main():
         summary_writer.add_scalar('learning rate', optimizer.param_groups[0]['lr'], step)
 
   def eval(epoch):
+    if epoch % cfg.epochs_per_eval != 0:
+      return
+
     model.eval()
-    model._modules['module'].phase = 'eval'
+    model.module.phase = 'eval'
+
+    regs = tf.placeholder(tf.float32, [None, 8732, 4], 'reg')
+    clss = tf.placeholder(tf.float32, [None, 8732, NUM_CLASSES], 'cls')
+
+    scores, bboxes = bboxes_nms_batch({i: clss[:, :, i] for i in range(NUM_CLASSES)},
+                                      {i: regs for i in range(NUM_CLASSES)},
+                                      nms_threshold=0.45, keep_top_k=200, parallel=5)
 
     results = {k: [] for k in VOC_CLASSES}
-    with torch.no_grad():
-      for inputs, reg_targets, cls_targets, meta_data in eval_loader:
-        inputs = inputs.cuda()
-        img_id = meta_data[0]['id']
-        width = meta_data[0]['w']
-        height = meta_data[0]['h']
-        outputs = model(inputs)  # [B, num_anchors, 5]
+    with tf.Session() as sess:
+      with torch.no_grad():
+        for inputs, _, _, meta_data in eval_loader:
+          reg_pred, cls_pred = model(inputs.cuda())
+          reg_pred = reg_pred.cpu().numpy()
+          cls_pred = cls_pred.cpu().numpy()[:, :, 1:]
+          scores_nms, bboxes_nms = sess.run([scores, bboxes], feed_dict={regs: reg_pred, clss: cls_pred})
 
-        outputs = outputs[0].detach().cpu().numpy()
-        for i in range(1, outputs.shape[0]):
-          for j in range(outputs.shape[1]):
-            if outputs[i, j, 0] > 0.6:
-              box = (outputs[i, j, 1:] * [width, height, width, height]).astype(np.int32)
-              results[VOC_CLASSES[i - 1]].append(
-                '%s %.6f %d %d %d %d' % (img_id[-1], outputs[i, j, 0], box[0], box[1], box[2], box[3]))
-            else:
-              break
+          for c in scores_nms.keys():
+            for i in range(scores_nms[c].shape[0]):
+              img_id, width, height = meta_data[i]['id'], meta_data[i]['w'], meta_data[i]['h']
+              for j in range(scores_nms[c].shape[1]):
+                if scores_nms[c][i, j] > 0.01:
+                  box = (bboxes_nms[c][i, j] * [width, height, width, height]).astype(np.int32)
+                  results[VOC_CLASSES[c]].append(
+                    '%s %.6f %d %d %d %d' % (img_id[-1], scores_nms[c][i, j], box[0], box[1], box[2], box[3]))
+                else:
+                  break
 
     filename = os.path.join(cfg.eval_data_dir, 'results', 'VOC2007', 'Main', 'comp3_det_test_%s.txt')
     for key in results.keys():
@@ -144,6 +158,7 @@ def main():
           print(line, end='\n', file=file)
 
     aps, mean_ap = map_util.do_python_eval()
+
     for ap, cls in zip(aps, VOC_CLASSES):
       summary_writer.add_scalar('AP/%s_ap' % cls, ap, epoch)
     summary_writer.add_scalar('mean_AP', mean_ap, epoch)
@@ -151,8 +166,7 @@ def main():
   for epoch in range(cfg.max_epoch):
     scheduler.step()
     train(epoch)
-    if epoch % cfg.epochs_per_eval == 0:
-      eval(epoch)
+    eval(epoch)
     torch.save(model.state_dict(), os.path.join(cfg.ckpt_dir, 'checkpoint.t7'))
     print('model saved in %s' % os.path.join(cfg.ckpt_dir, 'checkpoint.t7'))
 
