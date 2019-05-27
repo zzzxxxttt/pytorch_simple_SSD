@@ -56,17 +56,17 @@ def vgg16base():
               512, 512, 512, 1024, 1024])
 
 
-if __name__ == '__main__':
-
-  def hook(self, input, output):
-    print(output.data.cpu().numpy().shape)
-
-
-  net = vgg16base()
-  for m in net.modules():
-    if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
-      m.register_forward_hook(hook)
-
-  y = net(torch.randn(1, 3, 300, 300))
-  pass
-  # print(y.size())
+# if __name__ == '__main__':
+#
+#   def hook(self, input, output):
+#     print(output.data.cpu().numpy().shape)
+#
+#
+#   net = vgg16base()
+#   for m in net.modules():
+#     if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
+#       m.register_forward_hook(hook)
+#
+#   y = net(torch.randn(1, 3, 300, 300))
+#   pass
+#   # print(y.size())

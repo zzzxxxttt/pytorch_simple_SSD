@@ -5,7 +5,7 @@ import torch.nn.init as init
 from nets.anchors import *
 from nets.vgg_base import *
 from utils.bbox2target import *
-from utils import old_detect
+# from utils import old_detect
 
 base = {'300': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'C', 512, 512, 512, 'M',
                 512, 512, 512],
@@ -47,10 +47,10 @@ class SSD(nn.Module):
       self.reg_layers.append(nn.Conv2d(C, num_box * 4, 3, padding=1))
       self.cls_layers.append(nn.Conv2d(C, num_box * (num_classes + 1), 3, padding=1))
 
-    # todo replace this after debug
-    self.detect = old_detect.Detect(num_classes + 1,
-                                    bkg_label=0, top_k=200,
-                                    conf_thresh=0.01, nms_thresh=0.45)
+    # # replaced after debug
+    # self.detect = old_detect.Detect(num_classes + 1,
+    #                                 bkg_label=0, top_k=200,
+    #                                 conf_thresh=0.01, nms_thresh=0.45)
 
     for m in self.modules():
       if isinstance(m, nn.Conv2d):

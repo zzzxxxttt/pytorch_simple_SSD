@@ -122,16 +122,12 @@ def detect_np(boxes_pred, probs_pred, top_k, cls_thresh, nms_thresh):
     probs = max_probs[i, prob_filter]
 
     for c in range(1, num_classes):
-      # 找出等于当前类的anchor
-
       cls_filter = clses == c
       if np.sum(cls_filter) < 1:
         continue
 
       # idx of highest scoring and non-overlapping boxes per class
-      # 非极大值抑制
       nms_boxes, nms_probs, count = nms_np(boxes[cls_filter, :], probs[cls_filter], nms_thresh, top_k)
-      # 拿出抑制之后的bbox和概率
       # output[i, cls, :count] = torch.cat((scores[nms_idx[:count]].unsqueeze(1), boxes[nms_idx[:count]]), 1)
       result.append(np.hstack([np.clip(nms_boxes, 0.0, 1.0), nms_probs[:, None], np.ones([count, 1]) * (c - 1)]))
     batch_result.append(np.vstack(result))
@@ -140,7 +136,6 @@ def detect_np(boxes_pred, probs_pred, top_k, cls_thresh, nms_thresh):
 
 
 def nms_np(boxes, scores, overlap=0.5, top_k=200):
-  # 如果没有box就返回全0
   if boxes.shape[0] <= 1:
     return boxes, scores, boxes.shape[0]
 
@@ -158,7 +153,6 @@ def nms_np(boxes, scores, overlap=0.5, top_k=200):
       break
     argsort_prob = argsort_prob[:-1]  # remove kept element from view
     # load bboxes of next highest vals
-    # 除了当前box之外其他的box
     max_xy = np.minimum(boxes[i, 2:][None, :], boxes[argsort_prob, 2:])
     min_xy = np.maximum(boxes[i, :2][None, :], boxes[argsort_prob, :2])
     inter = np.clip((max_xy - min_xy), a_min=0, a_max=None)

@@ -20,9 +20,9 @@ parser.add_argument('--root_dir', type=str, default='./')
 parser.add_argument('--eval_data_dir', type=str, default='E:\\VOCdevkit_test')
 parser.add_argument('--pretrain_dir', type=str, default='./ckpt/SSD_07_12_baseline/checkpoint.t7')
 
-parser.add_argument('--batch_size', type=int, default=1)
+parser.add_argument('--batch_size', type=int, default=10)
 parser.add_argument('--use_gpu', type=str, default='0')
-parser.add_argument('--workers', type=int, default=0)
+parser.add_argument('--workers', type=int, default=2)
 
 cfg = parser.parse_args()
 
@@ -53,7 +53,7 @@ def main():
                                     keep_top_k=200, parallel=10)
 
   results = {k: [] for k in VOC_CLASSES}
-  with tf.Session() as sess:
+  with tf.Session(config=tf.ConfigProto(gpu_options=tf.GPUOptions(allow_growth=True))) as sess:
     with torch.no_grad():
       for inputs, bbox_targets, cls_targets, meta_data in tqdm(eval_loader):
         inputs = inputs.cuda()
@@ -80,7 +80,7 @@ def main():
       for line in results[key]:
         print(line, end='\n', file=file)
 
-  aps, mean_ap = map_util.do_python_eval()
+  map_util.do_python_eval()
 
 
 if __name__ == '__main__':

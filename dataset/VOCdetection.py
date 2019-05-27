@@ -91,8 +91,7 @@ class VOCDetection(data.Dataset):
       boxes, labels = target[:, :4], target[:, 4]
 
     # match priors (default boxes) and ground truth boxes
-    reg_target, cls_target = match_np(self.positive_threshold, boxes,
-                                      self.prior_boxes, labels)
+    reg_target, cls_target = match_np(self.positive_threshold, boxes, self.prior_boxes, labels)
 
     # [H,W,C] -> [C,H,W]
     img = torch.from_numpy(img).permute(2, 0, 1)

@@ -67,6 +67,6 @@ class AnchorBox(object):
     return output
 
 
-if __name__ == '__main__':
-  boxes = AnchorBox(v2)()
-  print(boxes)
+# if __name__ == '__main__':
+#   boxes = AnchorBox(v2)()
+#   print(boxes)

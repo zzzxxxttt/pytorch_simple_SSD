@@ -35,14 +35,16 @@ class mAP:
 
     return objects
 
-  def do_python_eval(self, use_07=True):
+  def do_python_eval(self, results_root=None, use_07=True):
+    if results_root is None:
+      results_root = self.VOC_root
     cachedir = os.path.join(self.devkit_path, 'annotations_cache')
     aps = []
     # The PASCAL VOC metric changed in 2010
     print('use VOC07 metric ' if use_07 else 'use VOC12 metric ')
 
     for i, cls in enumerate(VOC_CLASSES):
-      filename = os.path.join(self.VOC_root, 'results', 'VOC' + self.YEAR,
+      filename = os.path.join(results_root, 'results', 'VOC' + self.YEAR,
                               'Main', 'comp3_det_' + self.set_type + '_%s.txt' % cls)
       rec, prec, ap = self.voc_eval(filename, self.annopath,
                                     self.imgsetpath % self.set_type,
@@ -226,4 +228,4 @@ class mAP:
 
 if __name__ == '__main__':
   map = mAP('E:\\VOCdevkit_test')
-  map.do_python_eval()
+  map.do_python_eval(results_root='../ckpt/SSD_07_12_baseline')
