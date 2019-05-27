@@ -62,12 +62,12 @@ def main():
                                  num_workers=cfg.workers, shuffle=True,
                                  collate_fn=detection_collate, pin_memory=True)
 
-  eval_set = VOCDetection(cfg.eval_data_dir,
-                          image_sets=[('2007', 'test')],
-                          transform=imageAugmentation(train=False))
-  eval_loader = data.DataLoader(eval_set, cfg.eval_batch_size,
-                                num_workers=cfg.workers, shuffle=False,
-                                collate_fn=detection_collate, pin_memory=True)
+  # eval_set = VOCDetection(cfg.eval_data_dir,
+  #                         image_sets=[('2007', 'test')],
+  #                         transform=imageAugmentation(train=False))
+  # eval_loader = data.DataLoader(eval_set, cfg.eval_batch_size,
+  #                               num_workers=cfg.workers, shuffle=False,
+  #                               collate_fn=detection_collate, pin_memory=True)
 
   # map_util = mAP(cfg.eval_data_dir)
 
