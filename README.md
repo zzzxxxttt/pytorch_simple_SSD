@@ -5,7 +5,7 @@ The main difference is that I reorgainze the code structure and make it as simpl
 if you always get lost in the ocean of code (like me), I promise you will like this repository :) 
 
 The plain python implemented nms in ssd.pytorch is relatively slow and I don't want to compile the cuda nms (which is not *simple*, at least for me). 
-So I use the tensorflow nms function for evaluation, I know it sounds ridiculous but it works pretty well! 
+So I use the tensorflow nms function for evaluation, I know it sounds ridiculous but it works pretty well ! 
 Evaluation speed jumps from ~1FPS to ~10FPS, the only drawback is that you can't use tensorflow and pytorch in one file (more precisely when using nn.DataParallel).    
 
 There are three main parts: *./dataset*, *./nets* and *./utils*. 
@@ -23,8 +23,8 @@ There are three main parts: *./dataset*, *./nets* and *./utils*.
 ## Train
 1. download the VOC2007 and VOC2012 dataset 
 2. ```python train.py --data_dir YOUR_VOC_DIR --eval_data_dir YOUR_VOC_DIR ```
-(currently I only test the training with batch size 64 on 2GPUs, 
-if you only have one GPU then you may need to change some arguments in train.py)
+(currently I only tested the training with batch size 64 on 2 GPUs, 
+you may need to change some arguments (batch size, lr, etc) to run it on a single GPU)
 
 ## Evaluate
 * ```python train.py --eval_data_dir YOUR_VOC_DIR ```
