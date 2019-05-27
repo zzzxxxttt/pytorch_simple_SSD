@@ -28,7 +28,7 @@ There are three main parts: *./dataset*, *./nets* and *./utils*.
 you may need to change some arguments (batch size, lr, etc) to run it on a single GPU)
 
 ## Evaluate
-* ```python train.py --eval_data_dir YOUR_VOC_DIR ```
+* ```python eval.py --eval_data_dir YOUR_VOC_DIR ```
 
 ## Pascal VOC results:
 Method|Train set|Eval set|Paper mAP|Reproduced mAP
