@@ -39,6 +39,7 @@ parser.add_argument('--max_epoch', type=int, default=300)
 parser.add_argument('--epochs_per_eval', type=int, default=10)
 
 parser.add_argument('--workers', type=int, default=5)
+parser.add_argument('--gpu', type=str, default='0,1')
 parser.add_argument('--log_interval', type=int, default=10)
 
 cfg = parser.parse_args()
@@ -50,7 +51,7 @@ os.makedirs(cfg.ckpt_dir, exist_ok=True)
 os.makedirs(cfg.log_dir, exist_ok=True)
 
 # os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"  # see issue #152
-# os.environ["CUDA_VISIBLE_DEVICES"] = '0,1'
+# os.environ["CUDA_VISIBLE_DEVICES"] = cfg.gpu
 
 
 def main():

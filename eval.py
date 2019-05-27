@@ -21,13 +21,13 @@ parser.add_argument('--eval_data_dir', type=str, default='E:\\VOCdevkit_test')
 parser.add_argument('--pretrain_dir', type=str, default='./ckpt/SSD_07_12_baseline/checkpoint.t7')
 
 parser.add_argument('--batch_size', type=int, default=10)
-parser.add_argument('--use_gpu', type=str, default='0')
+parser.add_argument('--gpu', type=str, default='0')
 parser.add_argument('--workers', type=int, default=2)
 
 cfg = parser.parse_args()
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"  # see issue #152
-os.environ["CUDA_VISIBLE_DEVICES"] = cfg.use_gpu
+os.environ["CUDA_VISIBLE_DEVICES"] = cfg.gpu
 
 
 def main():
